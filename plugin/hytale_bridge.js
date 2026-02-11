@@ -41,11 +41,11 @@ BBPlugin.register("hytale_bridge", { // TODO: complete
     title: "Hytale Bridge",
     author: "Tazer",
     icon: "icon.png",
-    version: "1.0.0",
-    description: "Bridge Blockbench to Hytale seamlessly!",
+    version: "0.1.0",
+    description: "A Hytale/Blockbench plugin that bridges the two together seamlessly and effortlessly",
     tags: ["Hytale"],
     variant: "desktop",
-    min_version: "5.0.5",
+    min_version: "5.0.7",
     onload() {
         createPanel();
         try {
@@ -178,10 +178,10 @@ function createPanel() {
                     new Dialog({
                         title: 'Connect',
                         form: {
-                            ip: { type: 'text', value: 'localhost' },
-                            // default port
-                            port: { type: 'number', value: 8651 },
-                            key: { type: 'text', value: '' }
+                            ip: { label: 'Address', type: 'text', value: 'localhost' },
+                            // // default port
+                            // port: { type: 'number', value: 8651 },
+                            key: { label: 'Key', type: 'text', value: '' }
                         },
                         onConfirm: connectToSocket
                     }).show();
@@ -440,11 +440,11 @@ function createPanel() {
     });
 }
 
-function connectToSocket({ ip, port, key }) {
+function connectToSocket({ ip, key }) {
     if (bridgeState.client) bridgeState.client.end();
     bridgeState.client = new net.Socket();
 
-    bridgeState.client.connect(port, ip, () => {
+    bridgeState.client.connect(8651, ip, () => {
         bridgeState.client.write(JSON.stringify({ type: MESSAGES.CREATE, key }) + '\n');
     });
 

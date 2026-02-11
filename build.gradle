@@ -1,0 +1,100 @@
+plugins {
+    id "java"
+    id "org.jetbrains.gradle.plugin.idea-ext" version "1.3"
+}
+
+import org.gradle.internal.os.OperatingSystem
+
+ext {
+    if (project.hasProperty("hytaleHome")) {
+        hytaleHome = project.findProperty("hytaleHome")
+    } else {
+        def os = OperatingSystem.current()
+        if (os.isWindows()) {
+            hytaleHome = "${System.getProperty("user.home")}/AppData/Roaming/Hytale"
+        } else if (os.isMacOsX()) {
+            hytaleHome = "${System.getProperty("user.home")}/Library/Application Support/Hytale"
+        } else if (os.isLinux()) {
+            hytaleHome = "${System.getProperty("user.home")}/.var/app/com.hypixel.HytaleLauncher/data/Hytale"
+            if (!file(hytaleHome).exists()) {
+                hytaleHome = "${System.getProperty("user.home")}/.local/share/Hytale"
+            }
+        }
+    }
+}
+
+base.archivesName = project.mod_name
+project.group = project.maven_group
+project.version = "${project.mod_version}+${project.hytale_version}"
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(25)
+
+repositories {
+    maven { url "https://maven.hytale.com/${project.hytale_patchline}" }
+    exclusiveContent {
+        forRepository {
+            maven {
+                url "https://cursemaven.com"
+            }
+        }
+        filter {
+            includeGroup "curse.maven"
+        }
+    }
+}
+
+dependencies {
+    implementation("com.hypixel.hytale:Server:${project.hytale_version}")
+}
+
+processResources {
+    var properties = [
+            mod_group      : project.mod_group,
+            mod_name       : project.mod_name,
+            mod_version    : project.mod_version,
+            mod_description: project.mod_description,
+            hytale_version : project.hytale_version
+    ]
+
+    inputs.properties properties
+    filesMatching(["manifest.json"]) {
+        expand properties
+    }
+}
+
+java {
+    withSourcesJar()
+    withJavadocJar()
+}
+
+def createServerRunArguments(String srcDir) {
+    if (!project.hasProperty("hytaleHome")) {
+        throw new GradleException("Your Hytale install could not be detected automatically. If you are on an unsupported platform or using a custom install location, please define the install location using the hytale_home property.");
+    } else if (!file(project.findProperty("hytaleHome")).exists()) {
+        throw new GradleException("Failed to find Hytale at the expected location. Please make sure you have installed the game. The expected location can be changed using the hytale_home property. Currently looking in ${project.findProperty("hytaleHome")}")
+    }
+
+    return "--allow-op " +
+            "--disable-sentry " +
+            "--accept-early-plugins " +
+            "--assets=\"${hytaleHome}/install/${project.hytale_patchline}/package/game/latest/Assets.zip\" " +
+            "--mods=\"${srcDir}\""
+}
+
+idea.project.settings.runConfigurations {
+    "HytaleServer"(org.jetbrains.gradle.ext.Application) {
+        def serverRunDir = file("$projectDir/run")
+        if (!serverRunDir.exists()) {
+            serverRunDir.mkdirs()
+        }
+
+        mainClass = "com.hypixel.hytale.Main"
+        moduleName = project.idea.module.name + ".main"
+        programParameters = createServerRunArguments(sourceSets.main.java.srcDirs.first().parentFile.absolutePath)
+        workingDirectory = serverRunDir.absolutePath
+    }
+}
+
+tasks.named("jar") {
+    destinationDirectory = file("C:/Users/jedi/Documents/Projects/FileBrowser/run/earlyplugins")
+}

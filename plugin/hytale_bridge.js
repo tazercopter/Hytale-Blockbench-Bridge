@@ -1,7 +1,12 @@
 let net;
+let fs;
 let panel;
-let action;
+let requestFileTreeAction;
+let connectToHytaleAction;
 let menu;
+let usedAddress = 'localhost:8651';
+
+// TODO: panel and actions icon
 
 const bridgeState = {
     client: null,
@@ -14,7 +19,8 @@ const MESSAGES = {
     COMMAND: 'command',
     CREATED: 'created',
     FILE_TREE: 'fileTree',
-    FILE: 'file'
+    FILE: 'file',
+    UPDATE: 'update'
 };
 
 const COMMANDS = {
@@ -37,15 +43,21 @@ function is(name, extension) {
     return name.endsWith(extension);
 }
 
-BBPlugin.register("hytale_bridge", { // TODO: complete
+BBPlugin.register("hytale_bridge", {
     title: "Hytale Bridge",
     author: "Tazer",
     icon: "icon.png",
     version: "0.1.0",
     description: "A Hytale/Blockbench plugin that bridges the two together seamlessly and effortlessly",
     tags: ["Hytale"],
+    dependencies: ["hytale_plugin"],
     variant: "desktop",
     min_version: "5.0.7",
+    creation_date: "2026-2-10",
+    await_loading: true,
+    has_changelog: true,
+    repository: "https://github.com/tazercopter/Hytale-Blockbench-Bridge",
+    bug_tracker: "https://github.com/tazercopter/Hytale-Blockbench-Bridge/issues",
     onload() {
         createPanel();
         try {
@@ -54,21 +66,41 @@ BBPlugin.register("hytale_bridge", { // TODO: complete
             try {
                 net = require('net');
             } catch {
-                // ERROR?
+                // ERROR
             }
         }
-        action = new Action('request_file_tree', {
+
+        try {
+            fs = requireNativeModule('fs');
+        } catch {
+            try {
+                fs = require('fs');
+            } catch {
+                // ERROR
+            }
+        }
+
+        requestFileTreeAction = new Action('request_file_tree', {
             name: 'Request Hytale Files',
             icon: 'add',
             click() {
                 if (bridgeState.client) requestFileTree();
             }
         });
-        MenuBar.addAction(action, 'file');
+        MenuBar.addAction(requestFileTreeAction, 'file');
+        connectToHytaleAction = new Action('connect_to_hytale', {
+            name: 'Connect to Hytale',
+            icon: 'add',
+            click() {
+                menu.connect();
+            }
+        });
+        MenuBar.addAction(connectToHytaleAction, 'file');
     },
     onunload() {
         if (panel) panel.delete();
-        if (action) action.delete();
+        if (requestFileTreeAction) requestFileTreeAction.delete();
+        if (connectToHytaleAction) connectToHytaleAction.delete();
         if (bridgeState.client) {
             sendDisconnect();
             bridgeState.client.end();
@@ -80,7 +112,7 @@ function createPanel() {
     panel = new Panel({
         id: 'hytale_file_browser',
         name: 'Hytale File Browser',
-        icon: 'fa-brush',
+        icon: 'add',
         resizable: true,
         growable: true,
         expand_button: true, default_side: 'left',
@@ -95,7 +127,8 @@ function createPanel() {
             <div ref="treeScroll"
                 style="padding:8px;overflow-y:auto;height:100%"
                 @click="hideContextMenu"
-                @scroll="saveScrollPosition">
+                @scroll="saveScrollPosition"
+                @contextmenu.prevent="onPanelRightClick($event)">
 
                 <button @click="toggleConnection" style="width:100%;margin-bottom:8px">
                     {{ connected ? 'Disconnect from Hytale' : 'Connect to Hytale' }}
@@ -178,12 +211,13 @@ function createPanel() {
                     new Dialog({
                         title: 'Connect',
                         form: {
-                            ip: { label: 'Address', type: 'text', value: 'localhost' },
-                            // // default port
-                            // port: { type: 'number', value: 8651 },
+                            address: { label: 'Address', type: 'text', value: usedAddress },
                             key: { label: 'Key', type: 'text', value: '' }
                         },
-                        onConfirm: connectToSocket
+                        onConfirm: (formData) => {
+                            usedAddress = formData.address;
+                            connectToSocket(formData);
+                        }
                     }).show();
                 },
                 getPackState(pack) {
@@ -288,7 +322,7 @@ function createPanel() {
 
                         this.rebuildTree();
                     } else {
-                        requestFile(node.path);
+                        requestFile(node.path, this.selectedPack);
                     }
                 },
                 hideContextMenu() {
@@ -321,12 +355,28 @@ function createPanel() {
                         options
                     };
                 },
-                rightClickFolderSaveModel(node) {
+                onPanelRightClick(event) {
+                    if (!this.connected || this.packs[this.selectedPack].immutable) return;
+
+                    const options = [
+                        { label: 'Save Model', action: () => this.rightClickFolderSaveModel({ path: '' }) },
+                        { label: 'Save Texture', action: () => this.rightClickFolderSaveTexture({ path: '' }) }
+                    ];
+
+                    this.contextMenu = {
+                        visible: true,
+                        x: event.clientX,
+                        y: event.clientY,
+                        options
+                    };
+                },
+                rightClickFolderSaveModel({ path }) {
+                    const filePath = (path === '' ? '' : path + '/') + Project.name + '.blockymodel';
                     const nameDialog = new Dialog({
                         title: 'Save Model',
                         width: 150,
                         form: {
-                            file: { label: 'File', type: 'text', value: node.path + '/' + Project.name + '.blockymodel' }
+                            file: { label: 'File', type: 'text', value: filePath }
                         },
                         onConfirm: (formData) => {
                             if (!is(formData.file, EXTENSIONS.MODEL)) {
@@ -343,12 +393,15 @@ function createPanel() {
                                 // json blockymodel data
                                 data: Codecs.blockymodel.compile()
                             });
+
+                            this.applyUpdate(this.selectedPack, [formData.file], [])
+
                         }
                     });
 
                     nameDialog.show();
                 },
-                rightClickFolderSaveTexture(node) {
+                rightClickFolderSaveTexture({ path }) {
                     const texture = Texture.selected;
                     if (!texture) {
                         Blockbench.showMessageBox({
@@ -358,11 +411,12 @@ function createPanel() {
                         return;
                     }
 
+                    const filePath = (path === '' ? '' : path + '/') + texture.name;
                     const nameDialog = new Dialog({
                         title: 'Save Texture',
                         width: 150,
                         form: {
-                            file: { label: 'File', type: 'text', value: node.path + '/' + texture.name }
+                            file: { label: 'File', type: 'text', value: filePath }
                         },
                         onConfirm: (formData) => {
                             if (!is(formData.file, EXTENSIONS.TEXTURE)) {
@@ -373,12 +427,23 @@ function createPanel() {
                                 return;
                             }
 
+                            const source = texture.source;
+                            let data;
+
+                            if (source.startsWith("data")) {
+                                data = source.split(',')[1];
+                            } else {
+                                data = fs.readFileSync(source.split('?')[0]).toString('base64');
+                            }
+
                             sendCommand(COMMANDS.SAVE, {
                                 path: formData.file,
                                 pack: this.selectedPack,
                                 // base64 png data
-                                data: texture.source.split(',')[1]
+                                data: data
                             });
+
+                            this.applyUpdate(this.selectedPack, [formData.file], [])
                         }
                     });
 
@@ -397,6 +462,8 @@ function createPanel() {
                                 pack: this.selectedPack,
                                 name: formData.name
                             });
+
+                            // move all nodes inside?
                         }
                     });
 
@@ -407,6 +474,8 @@ function createPanel() {
                         path: node.path,
                         pack: this.selectedPack
                     });
+
+                    // delete all nodes inside?
                 },
                 rightClickFileRename(node) {
                     const nameDialog = new Dialog({
@@ -421,6 +490,9 @@ function createPanel() {
                                 pack: this.selectedPack,
                                 name: formData.name
                             });
+
+                            const newPath = node.path.split('/').slice(0, -1).concat(formData.name).join('/');
+                            this.applyUpdate(this.selectedPack, [newPath], [node.path])
                         }
                     });
 
@@ -431,7 +503,51 @@ function createPanel() {
                         path: node.path,
                         pack: this.selectedPack
                     });
+
+                    this.applyUpdate(this.selectedPack, [], [node.path])
                 },
+                addFile(pack, path) {
+                    const parts = path.split('/');
+                    const name = parts.pop();
+
+                    let current = pack.entries;
+
+                    for (const part of parts) {
+                        if (!current[part] || current[part] === true) {
+                            current[part] = {};
+                        }
+                        current = current[part];
+                    }
+
+                    current[name] = true;
+                },
+                deleteFile(pack, path) {
+                    const parts = path.split('/');
+                    const name = parts.pop();
+
+                    let current = pack.entries;
+
+                    for (const part of parts) {
+                        if (!current[part] || current[part] === true) return;
+                        current = current[part];
+                    }
+
+                    delete current[name];
+                },
+                applyUpdate(pack, added, deleted) {
+                    pack = this.packs[pack];
+                    if (!pack) return;
+
+                    added?.forEach(path => {
+                        this.addFile(pack, path);
+                    });
+
+                    deleted?.forEach(path => {
+                        this.deleteFile(pack, path);
+                    });
+
+                    this.rebuildTree();
+                }
             },
             created() {
                 menu = this;
@@ -440,11 +556,13 @@ function createPanel() {
     });
 }
 
-function connectToSocket({ ip, key }) {
+function connectToSocket({ address, key }) {
     if (bridgeState.client) bridgeState.client.end();
     bridgeState.client = new net.Socket();
 
-    bridgeState.client.connect(8651, ip, () => {
+    const ip = address.split(":")[0];
+    const port = address.split(":")[1];
+    bridgeState.client.connect(port, ip, () => {
         bridgeState.client.write(JSON.stringify({ type: MESSAGES.CREATE, key }) + '\n');
     });
 
@@ -471,62 +589,28 @@ function connectToSocket({ ip, key }) {
             const raw = bridgeState.buffer.slice(0, i);
             bridgeState.buffer = bridgeState.buffer.slice(i + 1);
             if (!raw.trim()) continue;
-            const msg = JSON.parse(raw);
+            const message = JSON.parse(raw);
 
-            if (msg.type === MESSAGES.CREATED) {
-                bridgeState.uuid = msg.uuid;
-                // POPUP
-                requestFileTree();
-            } else if (msg.type === MESSAGES.FILE_TREE) {
-                console.log(msg.packs);
-                menu.updateFileTrees(msg.packs);
-            } else if (msg.type === MESSAGES.FILE) {
-                if (is(msg.path, EXTENSIONS.MODEL)) {
-                    try {
-                        Codecs.blockymodel.load(msg.data, {
-                            path: msg.path,
-                            origin: 'Hytale Bridge'
-                        });
-                    } catch {
-                        // POPUP
-                    }
-                } else if (is(msg.path, EXTENSIONS.TEXTURE)) {
-                    try {
-                        if (!Project) return;
-
-                        const name = msg.path.split('/').pop();
-                        const dataUrl = 'data:image/png;base64,' + msg.data;
-
-                        // get or create texture
-                        let texture = Texture.all.find(t => t.name === name);
-                        if (!texture) {
-                            texture = new Texture({ name });
-                            texture.add(false);
-                        }
-
-                        texture.fromDataURL(dataUrl);
-
-                        texture.load(() => {
-                            // update uv size
-                            let size = [texture.width, texture.display_height];
-                            let frames = texture.frameCount;
-                            if (settings.detect_flipbook_textures.value == false || frames <= 2 || frames % 1) {
-                                size[1] = texture.height;
-                            }
-                            texture.uv_width = size[0];
-                            texture.uv_height = size[1];
-
-                            texture.select();
-                            Canvas.updateAll();
-
-                            // POPUP
-                        });
-
-                        Canvas.updateAll();
-                    } catch {
-
-                    }
+            switch (message.type) {
+                case MESSAGES.CREATED: {
+                    bridgeState.uuid = message.uuid;
+                    requestFileTree();
+                    // POPUP
+                    break;
                 }
+                case MESSAGES.FILE_TREE: {
+                    menu.updateFileTrees(message.packs);
+                    break;
+                }
+                case MESSAGES.FILE: {
+                    openFile(message);
+                    break;
+                }
+                case MESSAGES.UPDATE: {
+                    menu.applyUpdate(message.pack, message.added, message.deleted);
+                    break;
+                }
+                default: console.log("Unknown message type received from server", message.type);
             }
         }
     });
@@ -550,6 +634,55 @@ function requestFileTree() {
     sendCommand(COMMANDS.FILE_TREE);
 }
 
-function requestFile(path) {
-    sendCommand(COMMANDS.FILE, { path });
+function requestFile(path, pack) {
+    sendCommand(COMMANDS.FILE, { path, pack });
+}
+
+function openFile(message) {
+    if (is(message.path, EXTENSIONS.MODEL)) {
+        try {
+            Codecs.blockymodel.load(message.data, {
+                path: message.path,
+                origin: 'Hytale Bridge'
+            });
+        } catch {
+            // POPUP
+        }
+    } else if (is(message.path, EXTENSIONS.TEXTURE)) {
+        try {
+            if (!Project) return;
+
+            const name = message.path.split('/').pop();
+            const dataUrl = 'data:image/png;base64,' + message.data;
+
+            // get or create texture
+            let texture = Texture.all.find(t => t.name === name);
+            if (!texture) {
+                texture = new Texture({ name });
+                texture.add(false);
+            }
+
+            texture.fromDataURL(dataUrl);
+
+            texture.load(() => {
+                // update uv size
+                let size = [texture.width, texture.display_height];
+                let frames = texture.frameCount;
+                if (settings.detect_flipbook_textures.value == false || frames <= 2 || frames % 1) {
+                    size[1] = texture.height;
+                }
+                texture.uv_width = size[0];
+                texture.uv_height = size[1];
+
+                texture.select();
+                Canvas.updateAll();
+
+                // POPUP
+            });
+
+            Canvas.updateAll();
+        } catch {
+
+        }
+    }
 }

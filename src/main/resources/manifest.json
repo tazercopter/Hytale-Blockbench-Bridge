@@ -1,9 +1,9 @@
 {
   "Main": "dev.tazer.blockbench.BlockbenchPlugin",
-  "Group": "Tazer",
-  "Name": "Blockbench Bridge",
-  "Version": "0.1.0",
-  "Description": "Hiiiiiiiiiiiiiiiii",
+  "Group": "${mod_group}",
+  "Name": "${mod_name}",
+  "Version": "${mod_version}",
+  "Description": "A Hytale/Blockbench plugin that bridges the two together seamlessly and effortlessly.",
   "Website": "",
   "Authors": [
     {
@@ -11,7 +11,7 @@
       "Url": "https://www.curseforge.com/members/tazer/projects"
     }
   ],
-  "ServerVersion": "*",
+  "ServerVersion": "${hytale_version}",
   "Dependencies": {
     "Hytale:AssetModule": "*",
     "Hytale:CommonAssetModule": "*"

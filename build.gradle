@@ -31,16 +31,6 @@ java.toolchain.languageVersion = JavaLanguageVersion.of(25)
 
 repositories {
     maven { url "https://maven.hytale.com/${project.hytale_patchline}" }
-    exclusiveContent {
-        forRepository {
-            maven {
-                url "https://cursemaven.com"
-            }
-        }
-        filter {
-            includeGroup "curse.maven"
-        }
-    }
 }
 
 dependencies {
@@ -93,8 +83,4 @@ idea.project.settings.runConfigurations {
         programParameters = createServerRunArguments(sourceSets.main.java.srcDirs.first().parentFile.absolutePath)
         workingDirectory = serverRunDir.absolutePath
     }
-}
-
-tasks.named("jar") {
-    destinationDirectory = file("C:/Users/jedi/Documents/Projects/FileBrowser/run/earlyplugins")
 }

@@ -4,9 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonSyntaxException;
 import com.hypixel.hytale.logger.HytaleLogger;
-import com.hypixel.hytale.server.core.asset.common.events.CommonAssetMonitorEvent;
 import com.hypixel.hytale.server.core.auth.PlayerAuthentication;
-import com.hypixel.hytale.server.core.universe.PlayerRef;
 
 import java.io.*;
 import java.net.ServerSocket;
@@ -20,7 +18,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 
 public class BlockbenchBridge {
-    private static final int PORT = 8651; // TODO: config
     private static final String CHARACTERS = "abcdefghijklmnopqrstuvwxyz0123456789";
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final Gson GSON = new Gson();
@@ -39,8 +36,8 @@ public class BlockbenchBridge {
     }
 
     private void startServer() {
-        try (ServerSocket serverSocket = new ServerSocket(PORT)) {
-            LOGGER.at(Level.INFO).log("TCP bridge listening on port %d", PORT);
+        try (ServerSocket serverSocket = new ServerSocket(BlockbenchPlugin.get().config().port())) {
+            LOGGER.at(Level.INFO).log("TCP bridge listening on port %d", BlockbenchPlugin.get().config().port());
 
             while (true) {
                 Socket socket = serverSocket.accept();
@@ -92,7 +89,6 @@ public class BlockbenchBridge {
                     LOGGER.at(Level.INFO).log("Starting authenticated flow for connection %s", socket.getRemoteSocketAddress());
 
                     String key = json.has("key") ? json.get("key").getAsString() : null;
-//                    key = "hi-9410"; // TODO: when not testing
                     if (key == null) {
                         LOGGER.at(Level.WARNING).log("Missing authentication key from connection %s", socket.getRemoteSocketAddress());
                         continue;
@@ -114,10 +110,6 @@ public class BlockbenchBridge {
                             break;
                         }
                     }
-
-                    // TODO: when not testing
-//                    if (authentication == null) authentication = new PlayerAuthentication(UUID.randomUUID(), "consolee");
-
 
                     if (authentication == null) {
                         invalidateConnection(socket);

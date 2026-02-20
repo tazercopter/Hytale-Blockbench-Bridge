@@ -1,6 +1,9 @@
 package dev.tazer.blockbench;
 
-import com.google.gson.*;
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.google.gson.JsonPrimitive;
 import com.hypixel.hytale.assetstore.AssetPack;
 import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.server.core.asset.AssetModule;
@@ -11,10 +14,10 @@ import com.hypixel.hytale.server.core.asset.common.asset.FileCommonAsset;
 import com.hypixel.hytale.server.core.auth.PlayerAuthentication;
 
 import java.io.BufferedWriter;
-import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.logging.Level;
 
@@ -121,29 +124,44 @@ public class BlockbenchPacketHandler {
         response.addProperty("type", "fileTree");
         response.add("packs", packs);
 
-        LOGGER.at(Level.INFO).log("Sending Blockbench client (UUID: %s) file tree (%d assets)", blockbenchClient.getUuid(), size);
+        LOGGER.at(Level.INFO).log("Sending Blockbench client (UUID: %s) file tree (%d files)", blockbenchClient.getUuid(), size);
 
         sendMessage(response);
     }
 
     private void handleFileRequest(JsonObject message) {
-        String path = message.has("path") ? message.get("path").getAsString() : null;
+        String name = message.has("path") ? message.get("path").getAsString() : null;
 
-        if (path == null) {
+        if (name == null) {
             LOGGER.at(Level.WARNING).log("Missing requested file path from client (UUID: %s)", blockbenchClient.getUuid());
             return;
         }
 
-        CommonAsset asset = CommonAssetRegistry.getByName(path);
+        AssetPack pack = null;
+
+        for (AssetPack assetPack : AssetModule.get().getAssetPacks()) {
+            String jsonPack = message.has("pack") ? message.get("pack").getAsString() : null;
+            if (assetPack.getName().equals(jsonPack)) {
+                pack = assetPack;
+                break;
+            }
+        }
+
+        if (pack == null) {
+            LOGGER.at(Level.WARNING).log("Missing request asset pack from client (UUID: %s)", blockbenchClient.getUuid());
+            return;
+        }
+
+        CommonAsset asset = CommonAssetRegistry.getByName(name); // TODO: find conflicting assets and get the one of THIS pack
 
         if (asset == null) {
-            LOGGER.at(Level.WARNING).log("Unknown asset requested: %s (UUID: %s)", path, blockbenchClient.getUuid());
+            LOGGER.at(Level.WARNING).log("Unknown asset requested: %s (UUID: %s)", name, blockbenchClient.getUuid());
             return;
         }
 
         if (asset instanceof FileCommonAsset file) {
             sendFile(file);
-        } else LOGGER.at(Level.WARNING).log("Invalid asset requested: %s", path);
+        } else LOGGER.at(Level.WARNING).log("Invalid asset requested: %s", name);
     }
 
     private void sendFile(FileCommonAsset file) {
@@ -166,7 +184,7 @@ public class BlockbenchPacketHandler {
 
             sendMessage(response);
         }).exceptionally(error -> {
-            LOGGER.at(Level.WARNING).log("Failed to read asset block: %s, %s", file.getName(), error);
+            LOGGER.at(Level.WARNING).log("Failed to read asset data: %s, %s", file.getName(), error);
             return null;
         });
     }
@@ -214,7 +232,7 @@ public class BlockbenchPacketHandler {
         Path fileLocation = pack.getPackLocation();
 
         try {
-            if (Files.isDirectory(fileLocation)) {
+            if (!name.startsWith("/") && Files.isDirectory(fileLocation)) {
                 fileLocation = fileLocation.resolve("Common", name);
                 Files.createDirectories(fileLocation.getParent());
 
@@ -233,7 +251,6 @@ public class BlockbenchPacketHandler {
     private void handleRenameFolder(JsonObject message) {
         String path = message.has("path") ? message.get("path").getAsString() : null;
         String name = message.has("name") ? message.get("name").getAsString() : null;
-        String pack = message.has("pack") ? message.get("pack").getAsString() : null;
 
         if (path == null) {
             LOGGER.at(Level.WARNING).log("Missing path for folder rename from client (UUID: %s)", blockbenchClient.getUuid());
@@ -242,61 +259,6 @@ public class BlockbenchPacketHandler {
 
         if (name == null) {
             LOGGER.at(Level.WARNING).log("Missing name for folder rename from client (UUID: %s)", blockbenchClient.getUuid());
-            return;
-        }
-
-        if (pack == null) {
-            LOGGER.at(Level.WARNING).log("Missing pack for folder rename from client (UUID: %s)", blockbenchClient.getUuid());
-            return;
-        }
-
-        Path oldFolderPath = Path.of("mods", pack.replace(":", "."), "Common", path);
-        Path newFolderPath = oldFolderPath.getParent().resolve(name);
-
-        try {
-            Files.move(oldFolderPath, newFolderPath);
-            LOGGER.at(Level.INFO).log("Renamed folder from %s to %s", oldFolderPath, newFolderPath);
-        } catch (IOException error) {
-            LOGGER.at(Level.WARNING).log("Error renaming folder %s to %s, %s", oldFolderPath, newFolderPath, error);
-        }
-    }
-
-    private void handleRenameFile(JsonObject message) {
-        String path = message.has("path") ? message.get("path").getAsString() : null;
-        String name = message.has("name") ? message.get("name").getAsString() : null;
-        String pack = message.has("pack") ? message.get("pack").getAsString() : null;
-
-        if (path == null) {
-            LOGGER.at(Level.WARNING).log("Missing path for file rename from client (UUID: %s)", blockbenchClient.getUuid());
-            return;
-        }
-
-        if (name == null) {
-            LOGGER.at(Level.WARNING).log("Missing name for file rename from client (UUID: %s)", blockbenchClient.getUuid());
-            return;
-        }
-
-        if (pack == null) {
-            LOGGER.at(Level.WARNING).log("Missing pack for file rename from client (UUID: %s)", blockbenchClient.getUuid());
-            return;
-        }
-
-        Path oldFilePath = Path.of("mods", pack.replace(":", "."), "Common", path);
-        Path newFilePath = oldFilePath.getParent().resolve(name);
-
-        try {
-            Files.move(oldFilePath, newFilePath);
-            LOGGER.at(Level.INFO).log("Renamed file from %s to %s", oldFilePath, newFilePath);
-        } catch (IOException error) {
-            LOGGER.at(Level.WARNING).log("Error renaming file %s to %s, %s", oldFilePath, newFilePath, error);
-        }
-    }
-
-    private void handleDeleteFolder(JsonObject message) {
-        String name = message.has("path") ? message.get("path").getAsString() : null;
-
-        if (name == null) {
-            LOGGER.at(Level.WARNING).log("Missing path for file deletion from client (UUID: %s)", blockbenchClient.getUuid());
             return;
         }
 
@@ -311,7 +273,81 @@ public class BlockbenchPacketHandler {
         }
 
         if (pack == null) {
-            LOGGER.at(Level.WARNING).log("Missing asset pack for save from client (UUID: %s)", blockbenchClient.getUuid());
+            LOGGER.at(Level.WARNING).log("Missing asset pack for folder rename from client (UUID: %s)", blockbenchClient.getUuid());
+            return;
+        }
+
+        Path oldFolderPath = pack.getPackLocation().resolve("Common", path);
+        Path newFolderPath = oldFolderPath.getParent().resolve(name);
+
+        try {
+            Files.move(oldFolderPath, newFolderPath);
+            LOGGER.at(Level.INFO).log("Renamed folder from %s to %s", oldFolderPath, newFolderPath);
+        } catch (IOException error) {
+            LOGGER.at(Level.WARNING).log("Error renaming folder %s to %s, %s", oldFolderPath, newFolderPath, error);
+        }
+    }
+
+    private void handleRenameFile(JsonObject message) {
+        String path = message.has("path") ? message.get("path").getAsString() : null;
+        String name = message.has("name") ? message.get("name").getAsString() : null;
+
+        if (path == null) {
+            LOGGER.at(Level.WARNING).log("Missing path for file rename from client (UUID: %s)", blockbenchClient.getUuid());
+            return;
+        }
+
+        if (name == null) {
+            LOGGER.at(Level.WARNING).log("Missing name for file rename from client (UUID: %s)", blockbenchClient.getUuid());
+            return;
+        }
+
+        AssetPack pack = null;
+
+        for (AssetPack assetPack : AssetModule.get().getAssetPacks()) {
+            String jsonPack = message.has("pack") ? message.get("pack").getAsString() : null;
+            if (assetPack.getName().equals(jsonPack)) {
+                pack = assetPack;
+                break;
+            }
+        }
+
+        if (pack == null) {
+            LOGGER.at(Level.WARNING).log("Missing asset pack for file rename from client (UUID: %s)", blockbenchClient.getUuid());
+            return;
+        }
+
+        Path oldFilePath = pack.getPackLocation().resolve("Common", path);
+        Path newFilePath = oldFilePath.getParent().resolve(name);
+
+        try {
+            Files.move(oldFilePath, newFilePath);
+            LOGGER.at(Level.INFO).log("Renamed file from %s to %s", oldFilePath, newFilePath);
+        } catch (IOException error) {
+            LOGGER.at(Level.WARNING).log("Error renaming file %s to %s, %s", oldFilePath, newFilePath, error);
+        }
+    }
+
+    private void handleDeleteFolder(JsonObject message) {
+        String name = message.has("path") ? message.get("path").getAsString() : null;
+
+        if (name == null) {
+            LOGGER.at(Level.WARNING).log("Missing path for folder deletion from client (UUID: %s)", blockbenchClient.getUuid());
+            return;
+        }
+
+        AssetPack pack = null;
+
+        for (AssetPack assetPack : AssetModule.get().getAssetPacks()) {
+            String jsonPack = message.has("pack") ? message.get("pack").getAsString() : null;
+            if (assetPack.getName().equals(jsonPack)) {
+                pack = assetPack;
+                break;
+            }
+        }
+
+        if (pack == null) {
+            LOGGER.at(Level.WARNING).log("Missing asset pack for folder deletion from client (UUID: %s)", blockbenchClient.getUuid());
             return;
         }
 
@@ -324,7 +360,8 @@ public class BlockbenchPacketHandler {
                     .map(Path::toFile)
                     .forEach((file -> {
                         if (file.delete()) {
-                            CommonAssetRegistry.removeCommonAssetByName(finalPack.getName(), name + "/" + file.getName());
+                            String assetName = name + "/" + file.getName();
+                            CommonAssetRegistry.removeCommonAssetByName(finalPack.getName(), assetName);
                         }
                     }));
             LOGGER.at(Level.INFO).log("Deleted folder %s", folderPath);
@@ -352,7 +389,7 @@ public class BlockbenchPacketHandler {
         }
 
         if (pack == null) {
-            LOGGER.at(Level.WARNING).log("Missing asset pack for save from client (UUID: %s)", blockbenchClient.getUuid());
+            LOGGER.at(Level.WARNING).log("Missing asset pack for file deletion from client (UUID: %s)", blockbenchClient.getUuid());
             return;
         }
 

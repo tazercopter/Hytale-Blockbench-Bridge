@@ -1,14 +1,10 @@
 package dev.tazer.blockbench;
 
 import com.hypixel.hytale.server.core.auth.PlayerAuthentication;
-import com.hypixel.hytale.server.core.io.PacketHandler;
 import com.hypixel.hytale.server.core.permissions.PermissionHolder;
 import com.hypixel.hytale.server.core.permissions.PermissionsModule;
-import com.hypixel.hytale.server.core.universe.PlayerRef;
-import com.hypixel.hytale.server.core.universe.Universe;
 
 import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
 import java.util.UUID;
 
 public class BlockbenchClient implements PermissionHolder {

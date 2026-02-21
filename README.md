@@ -1,6 +1,6 @@
-[![Discord](https://img.shields.io/discord/1470817972972032153?label=discord&labelColor=C8EAFF&logo=discord&logoColor=black&color=FBF1B3)](https://discord.gg/mkysGtjVsX) [![CurseForge](https://img.shields.io/curseforge/dt/1442073?labelColor=C8EAFF&label=curseforge&logo=curseforge&logoColor=black&color=FBF1B3)](https://curseforge.com/hytale/mods/wardrobe) [![GitHub](https://img.shields.io/badge/repository-C8EAFF?logo=github&logoColor=black)](https://github.com/jacksonhardaway/wardrobe) [![GitHub Issues](https://img.shields.io/badge/issues-C8EAFF?logo=github&logoColor=black)](https://github.com/jacksonhardaway/wardrobe/issues) [![GitHub Wiki](https://img.shields.io/badge/documentation-C8EAFF?logo=github&logoColor=black)](https://github.com/jacksonhardaway/wardrobe/wiki)
+[![Discord](https://img.shields.io/discord/1470817972972032153?label=discord&labelColor=C8EAFF&logo=discord&logoColor=black&color=FBF1B3)](https://discord.gg/mkysGtjVsX) [![CurseForge](https://img.shields.io/curseforge/dt/1442073?labelColor=C8EAFF&label=curseforge&logo=curseforge&logoColor=black&color=FBF1B3)](https://www.curseforge.com/hytale/mods/bbb)
 
-<span style="color:#ba372a"><strong>This plugin is intended to be used with the <em>Hytale Bridge</em> Blockbench plugin installed. You cannot connect to Blockbench without it.</strong></span>
+<span style="color:#ba372a"><strong>This plugin is intended to be used with the <em>Hytale Bridge</em> Blockbench plugin installed. You cannot connect to Blockbench without it. You can find it [here](https://www.blockbench.net/plugins/hytale_bridge).</strong></span>
 
 Blockbench Bridge allows you to edit a Hytale world's assets (`.blockymodel` & `.png` files specifically) without leaving Blockbench, even on remote servers!
 

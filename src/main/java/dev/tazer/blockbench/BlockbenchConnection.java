@@ -1,6 +1,5 @@
 package dev.tazer.blockbench;
 
-import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
@@ -13,7 +12,6 @@ import com.hypixel.hytale.server.core.asset.common.CommonAssetRegistry;
 import com.hypixel.hytale.server.core.asset.common.asset.FileCommonAsset;
 import com.hypixel.hytale.server.core.auth.PlayerAuthentication;
 
-import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -21,26 +19,25 @@ import java.nio.file.Path;
 import java.util.*;
 import java.util.logging.Level;
 
-public class BlockbenchPacketHandler {
-    private static final Gson GSON = new Gson();
-
-    private final BlockbenchClient blockbenchClient;
-    private final BufferedWriter writer;
+public class BlockbenchConnection {
     private static final HytaleLogger LOGGER = HytaleLogger.forEnclosingClass();
 
-    public BlockbenchPacketHandler(BufferedWriter writer, PlayerAuthentication auth) {
-        this.writer = writer;
-        this.blockbenchClient = new BlockbenchClient(auth, this);
+    private final BridgeSession session;
+    private final UUID uuid;
+
+    public BlockbenchConnection(BridgeSession session, PlayerAuthentication auth) {
+        this.session = session;
+        this.uuid = auth.getUuid();
     }
 
-    public BlockbenchClient getBlockbenchClient() {
-        return this.blockbenchClient;
+    public UUID getUuid() {
+        return uuid;
     }
 
-    public void handle(JsonObject message) {
+    public void handleCommand(JsonObject message) {
         String command = message.has("command") ? message.get("command").getAsString() : null;
         if (command == null) {
-            LOGGER.at(Level.WARNING).log("Missing command from client (UUID: %s)", blockbenchClient.getUuid());
+            LOGGER.at(Level.WARNING).log("Missing command from connection (UUID: %s)", uuid);
             return;
         }
 
@@ -52,18 +49,13 @@ public class BlockbenchPacketHandler {
             case "renameFolder" -> handleRenameFolder(message);
             case "renameFile" -> handleRenameFile(message);
             case "save" -> handleSave(message);
-            case "disconnect" -> BlockbenchPlugin.getBridge().cleanupConnection(blockbenchClient.getUuid());
+            case "disconnect" -> session.disconnect();
             default -> {}
         }
     }
 
     public void sendMessage(JsonObject message) {
-        try {
-            writer.write(GSON.toJson(message) + "\n");
-            writer.flush();
-        } catch (IOException e) {
-            LOGGER.at(Level.WARNING).log("Failed to send message to client (UUID: %s): %s", blockbenchClient.getUuid(), message);
-        }
+        session.write(message, session.getAddress());
     }
 
     public void sendFileTree() {
@@ -124,7 +116,7 @@ public class BlockbenchPacketHandler {
         response.addProperty("type", "fileTree");
         response.add("packs", packs);
 
-        LOGGER.at(Level.INFO).log("Sending Blockbench client (UUID: %s) file tree (%d files)", blockbenchClient.getUuid(), size);
+        LOGGER.at(Level.INFO).log("Sending connection (UUID: %s) file tree (%d files)", uuid, size);
 
         sendMessage(response);
     }
@@ -133,7 +125,7 @@ public class BlockbenchPacketHandler {
         String name = message.has("path") ? message.get("path").getAsString() : null;
 
         if (name == null) {
-            LOGGER.at(Level.WARNING).log("Missing requested file path from client (UUID: %s)", blockbenchClient.getUuid());
+            LOGGER.at(Level.WARNING).log("Missing requested file path from connection (UUID: %s)", uuid);
             return;
         }
 
@@ -148,14 +140,14 @@ public class BlockbenchPacketHandler {
         }
 
         if (pack == null) {
-            LOGGER.at(Level.WARNING).log("Missing request asset pack from client (UUID: %s)", blockbenchClient.getUuid());
+            LOGGER.at(Level.WARNING).log("Missing request asset pack from connection (UUID: %s)", uuid);
             return;
         }
 
         CommonAsset asset = CommonAssetRegistry.getByName(name); // TODO: find conflicting assets and get the one of THIS pack
 
         if (asset == null) {
-            LOGGER.at(Level.WARNING).log("Unknown asset requested: %s (UUID: %s)", name, blockbenchClient.getUuid());
+            LOGGER.at(Level.WARNING).log("Unknown asset requested: %s (UUID: %s)", name, uuid);
             return;
         }
 
@@ -193,7 +185,7 @@ public class BlockbenchPacketHandler {
         String name = message.has("path") ? message.get("path").getAsString() : null;
 
         if (name == null) {
-            LOGGER.at(Level.WARNING).log("Missing file path for save from client (UUID: %s)", blockbenchClient.getUuid());
+            LOGGER.at(Level.WARNING).log("Missing file path for save from connection (UUID: %s)", uuid);
             return;
         }
 
@@ -208,14 +200,14 @@ public class BlockbenchPacketHandler {
         }
 
         if (pack == null) {
-            LOGGER.at(Level.WARNING).log("Missing asset pack for save from client (UUID: %s)", blockbenchClient.getUuid());
+            LOGGER.at(Level.WARNING).log("Missing asset pack for save from connection (UUID: %s)", uuid);
             return;
         }
 
         String data = message.has("data") ? message.get("data").getAsString() : null;
 
         if (data == null) {
-            LOGGER.at(Level.WARNING).log("Missing file data for save from client (UUID: %s)", blockbenchClient.getUuid());
+            LOGGER.at(Level.WARNING).log("Missing file data for save from connection (UUID: %s)", uuid);
             return;
         }
 
@@ -253,12 +245,12 @@ public class BlockbenchPacketHandler {
         String name = message.has("name") ? message.get("name").getAsString() : null;
 
         if (path == null) {
-            LOGGER.at(Level.WARNING).log("Missing path for folder rename from client (UUID: %s)", blockbenchClient.getUuid());
+            LOGGER.at(Level.WARNING).log("Missing path for folder rename from connection (UUID: %s)", uuid);
             return;
         }
 
         if (name == null) {
-            LOGGER.at(Level.WARNING).log("Missing name for folder rename from client (UUID: %s)", blockbenchClient.getUuid());
+            LOGGER.at(Level.WARNING).log("Missing name for folder rename from connection (UUID: %s)", uuid);
             return;
         }
 
@@ -273,7 +265,7 @@ public class BlockbenchPacketHandler {
         }
 
         if (pack == null) {
-            LOGGER.at(Level.WARNING).log("Missing asset pack for folder rename from client (UUID: %s)", blockbenchClient.getUuid());
+            LOGGER.at(Level.WARNING).log("Missing asset pack for folder rename from connection (UUID: %s)", uuid);
             return;
         }
 
@@ -293,12 +285,12 @@ public class BlockbenchPacketHandler {
         String name = message.has("name") ? message.get("name").getAsString() : null;
 
         if (path == null) {
-            LOGGER.at(Level.WARNING).log("Missing path for file rename from client (UUID: %s)", blockbenchClient.getUuid());
+            LOGGER.at(Level.WARNING).log("Missing path for file rename from connection (UUID: %s)", uuid);
             return;
         }
 
         if (name == null) {
-            LOGGER.at(Level.WARNING).log("Missing name for file rename from client (UUID: %s)", blockbenchClient.getUuid());
+            LOGGER.at(Level.WARNING).log("Missing name for file rename from connection (UUID: %s)", uuid);
             return;
         }
 
@@ -313,7 +305,7 @@ public class BlockbenchPacketHandler {
         }
 
         if (pack == null) {
-            LOGGER.at(Level.WARNING).log("Missing asset pack for file rename from client (UUID: %s)", blockbenchClient.getUuid());
+            LOGGER.at(Level.WARNING).log("Missing asset pack for file rename from connection (UUID: %s)", uuid);
             return;
         }
 
@@ -332,7 +324,7 @@ public class BlockbenchPacketHandler {
         String name = message.has("path") ? message.get("path").getAsString() : null;
 
         if (name == null) {
-            LOGGER.at(Level.WARNING).log("Missing path for folder deletion from client (UUID: %s)", blockbenchClient.getUuid());
+            LOGGER.at(Level.WARNING).log("Missing path for folder deletion from connection (UUID: %s)", uuid);
             return;
         }
 
@@ -347,7 +339,7 @@ public class BlockbenchPacketHandler {
         }
 
         if (pack == null) {
-            LOGGER.at(Level.WARNING).log("Missing asset pack for folder deletion from client (UUID: %s)", blockbenchClient.getUuid());
+            LOGGER.at(Level.WARNING).log("Missing asset pack for folder deletion from connection (UUID: %s)", uuid);
             return;
         }
 
@@ -374,7 +366,7 @@ public class BlockbenchPacketHandler {
         String name = message.has("path") ? message.get("path").getAsString() : null;
 
         if (name == null) {
-            LOGGER.at(Level.WARNING).log("Missing path for file deletion from client (UUID: %s)", blockbenchClient.getUuid());
+            LOGGER.at(Level.WARNING).log("Missing path for file deletion from connection (UUID: %s)", uuid);
             return;
         }
 
@@ -389,7 +381,7 @@ public class BlockbenchPacketHandler {
         }
 
         if (pack == null) {
-            LOGGER.at(Level.WARNING).log("Missing asset pack for file deletion from client (UUID: %s)", blockbenchClient.getUuid());
+            LOGGER.at(Level.WARNING).log("Missing asset pack for file deletion from connection (UUID: %s)", uuid);
             return;
         }
 

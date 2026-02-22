@@ -6,9 +6,9 @@ import com.hypixel.hytale.common.util.PathUtil;
 import com.hypixel.hytale.common.util.PatternUtil;
 import com.hypixel.hytale.server.core.asset.AssetModule;
 import com.hypixel.hytale.server.core.asset.common.events.CommonAssetMonitorEvent;
+import com.hypixel.hytale.server.core.io.ServerManager;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.plugin.JavaPluginInit;
-import com.hypixel.hytale.server.core.util.Config;
 import dev.tazer.blockbench.command.BlockbenchCommand;
 
 import javax.annotation.Nonnull;
@@ -17,8 +17,7 @@ import java.util.logging.Level;
 
 public class BlockbenchPlugin extends JavaPlugin {
     private static BlockbenchPlugin instance;
-    private static BlockbenchBridge bridgeInstance = null;
-    private final Config<BlockbenchConfig> config = this.withConfig("BlockbenchConfig", BlockbenchConfig.CODEC);
+    private static BlockbenchBridge bridge = null;
 
     public BlockbenchPlugin(@Nonnull JavaPluginInit init) {
         super(init);
@@ -30,21 +29,33 @@ public class BlockbenchPlugin extends JavaPlugin {
     }
 
     public static BlockbenchBridge getBridge() {
-        return bridgeInstance;
-    }
-
-    public BlockbenchConfig config() {
-        return get().config.get();
+        return bridge;
     }
 
     @Override
     protected void setup() {
         this.getCommandRegistry().registerCommand(new BlockbenchCommand());
 
-        config.save();
-        getLogger().at(Level.INFO).log("Setting up the TCP bridge...");
-        bridgeInstance = new BlockbenchBridge();
+        getLogger().at(Level.INFO).log("Setting up the Blockbench Bridge...");
+        bridge = new BlockbenchBridge();
         getEventRegistry().register(CommonAssetMonitorEvent.class, BlockbenchPlugin::onCommonAssetsMonitor);
+    }
+
+    @Override
+    protected void start() {
+        ServerManager.get().waitForBindComplete();
+
+        int port;
+        try {
+            port = ServerManager.get().getLocalOrPublicAddress().getPort();
+        } catch (Exception e) {
+            getLogger().at(Level.WARNING).log("Could not get the current local or public address of the server!");
+            return;
+        }
+
+        bridge.createTCPListener(port);
+        bridge.createTCPListener(8651);
+//        bridge.createUDPListener();
     }
 
     private static void onCommonAssetsMonitor(CommonAssetMonitorEvent event) {
@@ -73,10 +84,10 @@ public class BlockbenchPlugin extends JavaPlugin {
                 });
         message.add("deleted", removed);
 
-        bridgeInstance.clients.forEach((_, client) ->
-                client.getPacketHandler().sendMessage(message)
+        bridge.getConnections().forEach((_, connection) ->
+                connection.sendMessage(message)
         );
 
-        if (!bridgeInstance.clients.isEmpty()) get().getLogger().at(Level.INFO).log("Updated %d blockbench client(s)", bridgeInstance.clients.size());
+        if (!bridge.getConnections().isEmpty()) get().getLogger().at(Level.INFO).log("Updated %d blockbench client(s)", bridge.getConnections().size());
     }
 }

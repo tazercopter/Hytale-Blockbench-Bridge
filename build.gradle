@@ -80,7 +80,7 @@ idea.project.settings.runConfigurations {
 
         mainClass = "com.hypixel.hytale.Main"
         moduleName = project.idea.module.name + ".main"
-        programParameters = createServerRunArguments(sourceSets.main.java.srcDirs.first().parentFile.absolutePath)
-        workingDirectory = serverRunDir.absolutePath
+        programParameters = createServerRunArguments(layout.buildDirectory.dir("resources").get().asFile.absolutePath)
+        workingDirectory = serverRunDir
     }
 }

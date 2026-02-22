@@ -7,6 +7,7 @@ import com.hypixel.hytale.server.core.command.system.basecommands.AbstractAsyncC
 import dev.tazer.blockbench.BlockbenchPlugin;
 
 import javax.annotation.Nonnull;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 public class BlockbenchCommand extends AbstractAsyncCommand {
@@ -20,7 +21,7 @@ public class BlockbenchCommand extends AbstractAsyncCommand {
     @Override
     protected CompletableFuture<Void> executeAsync(@Nonnull CommandContext commandContext) {
         return CompletableFuture.runAsync(() -> {
-            String key = BlockbenchPlugin.getBridge().generateKey(commandContext.sender().getDisplayName());
+            String key = BlockbenchPlugin.getBridge().generateKey(commandContext.isPlayer() ? commandContext.sender().getDisplayName() : null, commandContext.isPlayer() ? commandContext.sender().getUuid() : UUID.randomUUID());
             commandContext.sendMessage(Message.raw("Input key (" + key + ") in Blockbench to connect"));
         });
     }

@@ -2,7 +2,7 @@
 
 Hytale Bridge allows to edit Hytale's Common assets (`.blockymodel` & `.png` files specifically) without leaving Blockbench, even on remote servers!
 
-You can connect to Hytale by running `/blockbench` in the console or as a player with the correct permissions in your server. You will receive an authorisation key which you can input alongside the server's connection address (with the Blockbench-specific port) to form a bridge and sync all files!
+You can connect to Hytale by running `/blockbench` in the console or as a player with the correct permissions in your server. You will receive an authorisation key which you can input alongside the server's connection address to form a bridge and sync all files!
 
 Once connected, you'll see all of the asset packs installed on your world, including all of their Common files. You're then free to open any model/texture into blockbench or save any of your creations into your own asset packs. Folder creation/management is also supported, so just Blockbench can manage your entire Common directory!
 
@@ -10,6 +10,6 @@ Once connected, you'll see all of the asset packs installed on your world, inclu
 
 ### Usage
 1. Go to the Hytale File Browser Panel > click on Connect to Hytale
-2. Input the server address (with the custom Blockbench port the server uses) and the key provided by Hytale to connect.
+2. Input the server address and the key provided by Hytale to connect.
 3. Left/Right click folders and files to interact
 4. Request files at any time by going to File > Request Hytale Files

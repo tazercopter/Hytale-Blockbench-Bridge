@@ -14,15 +14,14 @@ public class BlockbenchCommand extends AbstractAsyncCommand {
     public BlockbenchCommand() {
         super("blockbench", "Create an authentication key for a Blockbench client");
         setPermissionGroup(GameMode.Creative);
-        addAliases("bb", "bb key", "bb auth", "blockbench key", "blockbench auth");
+        addAliases("bb");
     }
 
     @Nonnull
     @Override
     protected CompletableFuture<Void> executeAsync(@Nonnull CommandContext commandContext) {
-        return CompletableFuture.runAsync(() -> {
-            String key = BlockbenchPlugin.getBridge().generateKey(commandContext.isPlayer() ? commandContext.sender().getDisplayName() : null, commandContext.isPlayer() ? commandContext.sender().getUuid() : UUID.randomUUID());
-            commandContext.sendMessage(Message.raw("Input key (" + key + ") in Blockbench to connect"));
-        });
+        String key = BlockbenchPlugin.getBridge().generateKey(commandContext.sender().getDisplayName(), UUID.randomUUID());
+        commandContext.sendMessage(Message.raw("Input key (" + key + ") in Blockbench to connect"));
+        return CompletableFuture.completedFuture(null);
     }
 }

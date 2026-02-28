@@ -58,9 +58,18 @@ public class BlockbenchPlugin extends JavaPlugin {
 //        bridge.createUDPListener();
     }
 
+    @Override
+    protected void shutdown() {
+        if (bridge != null) {
+            bridge.shutdown();
+        }
+    }
+
     private static void onCommonAssetsMonitor(CommonAssetMonitorEvent event) {
+        if (bridge == null) return;
+
         JsonObject message = new JsonObject();
-        message.addProperty("type", "update");
+        message.addProperty("type", MessageType.UPDATE.value());
         message.addProperty("pack", event.getAssetPack());
 
         Path commonPath = AssetModule.get().getAssetPack(event.getAssetPack()).getRoot().resolve("Common");

@@ -16,13 +16,14 @@ public class UDPBridgeSession extends BridgeSession {
     }
 
     @Override
-    void write(JsonObject message, SocketAddress address) {
+    void write(JsonObject message) {
         byte[] responseBytes = (GSON.toJson(message) + "\n").getBytes(StandardCharsets.UTF_8);
+        // Might need to use netty datagram packet instead?
         channel.writeAndFlush(new DatagramPacket(responseBytes, responseBytes.length, address));
     }
 
     @Override
-    void disconnect() {
+    void close() {
         BlockbenchPlugin.getBridge().disconnect(address);
     }
 }

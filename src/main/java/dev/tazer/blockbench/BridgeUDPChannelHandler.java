@@ -16,20 +16,26 @@ public class BridgeUDPChannelHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void channelRead(ChannelHandlerContext context, Object message) throws Exception {
+        boolean consumed = false;
         HytaleLogger logger = BlockbenchPlugin.get().getLogger();
         if (message instanceof DatagramPacket datagram) {
             SocketAddress address = datagram.getSocketAddress();
             byte[] bytes = datagram.getData();
-            JsonObject json;
             try {
                 String jsonString = new String(bytes, StandardCharsets.UTF_8);
-                json = JsonParser.parseString(jsonString).getAsJsonObject();
-                BlockbenchPlugin.getBridge().handleMessage(new UDPBridgeSession(address, context.channel()), json);
+                JsonObject json = JsonParser.parseString(jsonString).getAsJsonObject();
+                BlockbenchBridge bridge = BlockbenchPlugin.getBridge();
+                BridgeSession session = bridge.getSession(address);
+                if (session == null) {
+                    session = new UDPBridgeSession(address, context.channel());
+                }
+                bridge.handleMessage(session, json);
+                consumed = true;
             } catch (JsonSyntaxException e) {
                 logger.at(Level.WARNING).log("Incorrect JSON syntax from address %s", address);
             }
-        } else logger.at(Level.WARNING).log("Unknown message format sent to %s", context.channel().localAddress());
+        }
 
-        super.channelRead(context, message);
+        if (!consumed) super.channelRead(context, message);
     }
 }

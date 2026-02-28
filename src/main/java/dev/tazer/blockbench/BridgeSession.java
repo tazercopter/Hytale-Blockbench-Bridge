@@ -17,7 +17,7 @@ public abstract class BridgeSession {
         return address;
     }
 
-    abstract void write(JsonObject message, SocketAddress address);
+    abstract void write(JsonObject message);
 
-    abstract void disconnect();
+    abstract void close();
 }

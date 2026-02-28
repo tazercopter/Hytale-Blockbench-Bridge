@@ -6,22 +6,22 @@ import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.net.Socket;
-import java.net.SocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.logging.Level;
 
 public class TCPBridgeSession extends BridgeSession {
     private final Socket socket;
+    private final BufferedWriter writer;
 
-    protected TCPBridgeSession(Socket socket) {
+    protected TCPBridgeSession(Socket socket) throws IOException {
         super(socket.getRemoteSocketAddress());
         this.socket = socket;
+        this.writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8));
     }
 
     @Override
-    void write(JsonObject message, SocketAddress address) {
+    synchronized void write(JsonObject message) {
         try {
-            BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8));
             writer.write(GSON.toJson(message) + "\n");
             writer.flush();
         } catch (IOException e) {
@@ -30,7 +30,13 @@ public class TCPBridgeSession extends BridgeSession {
     }
 
     @Override
-    void disconnect() {
+    void close() {
+        try {
+            writer.close();
+        } catch (IOException ignored) {}
+        try {
+            socket.close();
+        } catch (IOException ignored) {}
         BlockbenchPlugin.getBridge().disconnect(address);
     }
 }

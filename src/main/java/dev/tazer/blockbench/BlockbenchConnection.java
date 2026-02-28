@@ -12,6 +12,7 @@ import com.hypixel.hytale.server.core.asset.common.CommonAssetRegistry;
 import com.hypixel.hytale.server.core.asset.common.asset.FileCommonAsset;
 import com.hypixel.hytale.server.core.auth.PlayerAuthentication;
 
+import javax.annotation.Nullable;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -41,24 +42,29 @@ public class BlockbenchConnection {
             return;
         }
 
-        switch (command) {
-            case "fileTree" -> sendFileTree();
-            case "file" -> handleFileRequest(message);
-            case "deleteFile" -> handleDeleteFile(message);
-            case "deleteFolder" -> handleDeleteFolder(message);
-            case "renameFolder" -> handleRenameFolder(message);
-            case "renameFile" -> handleRenameFile(message);
-            case "save" -> handleSave(message);
-            case "disconnect" -> session.disconnect();
-            default -> {}
+        CommandType cmdType = CommandType.fromString(command);
+        if (cmdType == null) {
+            LOGGER.at(Level.WARNING).log("Unknown command '%s' from connection (UUID: %s)", command, uuid);
+            return;
+        }
+
+        switch (cmdType) {
+            case FILE_TREE -> sendFileTree();
+            case FILE -> handleFileRequest(message);
+            case DELETE_FILE -> handleDeleteFile(message);
+            case DELETE_FOLDER -> handleDeleteFolder(message);
+            case RENAME_FOLDER -> handleRenameFolder(message);
+            case RENAME_FILE -> handleRenameFile(message);
+            case SAVE -> handleSave(message);
+            case DISCONNECT -> session.close();
         }
     }
 
     public void sendMessage(JsonObject message) {
-        session.write(message, session.getAddress());
+        session.write(message);
     }
 
-    public void sendFileTree() {
+    private void sendFileTree() {
         int size = 0;
 
         Map<String, JsonObject> packEntries = new HashMap<>();
@@ -113,7 +119,7 @@ public class BlockbenchConnection {
         }
 
         JsonObject response = new JsonObject();
-        response.addProperty("type", "fileTree");
+        response.addProperty("type", MessageType.FILE_TREE.value());
         response.add("packs", packs);
 
         LOGGER.at(Level.INFO).log("Sending connection (UUID: %s) file tree (%d files)", uuid, size);
@@ -129,16 +135,7 @@ public class BlockbenchConnection {
             return;
         }
 
-        AssetPack pack = null;
-
-        for (AssetPack assetPack : AssetModule.get().getAssetPacks()) {
-            String jsonPack = message.has("pack") ? message.get("pack").getAsString() : null;
-            if (assetPack.getName().equals(jsonPack)) {
-                pack = assetPack;
-                break;
-            }
-        }
-
+        AssetPack pack = getPackFromMessage(message);
         if (pack == null) {
             LOGGER.at(Level.WARNING).log("Missing request asset pack from connection (UUID: %s)", uuid);
             return;
@@ -158,7 +155,7 @@ public class BlockbenchConnection {
 
     private void sendFile(FileCommonAsset file) {
         JsonObject response = new JsonObject();
-        response.addProperty("type", "file");
+        response.addProperty("type", MessageType.FILE.value());
         response.addProperty("path", file.getName());
 
         file.getBlob0().thenAccept(bytes -> {
@@ -189,16 +186,7 @@ public class BlockbenchConnection {
             return;
         }
 
-        AssetPack pack = null;
-
-        for (AssetPack assetPack : AssetModule.get().getAssetPacks()) {
-            String jsonPack = message.has("pack") ? message.get("pack").getAsString() : null;
-            if (assetPack.getName().equals(jsonPack)) {
-                pack = assetPack;
-                break;
-            }
-        }
-
+        AssetPack pack = getPackFromMessage(message);
         if (pack == null) {
             LOGGER.at(Level.WARNING).log("Missing asset pack for save from connection (UUID: %s)", uuid);
             return;
@@ -215,25 +203,30 @@ public class BlockbenchConnection {
         if (name.endsWith(".blockymodel")) {
             bytes = data.getBytes(StandardCharsets.UTF_8);
         } else if (name.endsWith(".png")) {
-            bytes = Base64.getDecoder().decode(data);
+            try {
+                bytes = Base64.getDecoder().decode(data);
+            } catch (IllegalArgumentException e) {
+                LOGGER.at(Level.WARNING).log("Invalid Base64 data for save from connection (UUID: %s): %s", uuid, e.getMessage());
+                return;
+            }
         } else {
             LOGGER.at(Level.WARNING).log("Unsupported file type sent: %s", name);
             return;
         }
 
-        Path fileLocation = pack.getPackLocation();
+        Path fileLocation = safeResolveCommonPath(pack, name);
+        if (fileLocation == null) {
+            LOGGER.at(Level.WARNING).log("Invalid file path for save from connection (UUID: %s): %s", uuid, name);
+            return;
+        }
 
         try {
-            if (!name.startsWith("/") && Files.isDirectory(fileLocation)) {
-                fileLocation = fileLocation.resolve("Common", name);
+            if (Files.isDirectory(pack.getPackLocation())) {
                 Files.createDirectories(fileLocation.getParent());
-
-                if (Files.isDirectory(fileLocation.getParent())) {
-                    Files.write(fileLocation, bytes);
-                    FileCommonAsset file = new FileCommonAsset(fileLocation, name, bytes);
-                    CommonAssetModule.get().addCommonAsset(pack.getName(), file);
-                    LOGGER.at(Level.INFO).log("Created new file common asset: %s at %s", name, fileLocation);
-                }
+                Files.write(fileLocation, bytes);
+                FileCommonAsset file = new FileCommonAsset(fileLocation, name, bytes);
+                CommonAssetModule.get().addCommonAsset(pack.getName(), file);
+                LOGGER.at(Level.INFO).log("Created new file common asset: %s at %s", name, fileLocation);
             }
         } catch (IOException error) {
             LOGGER.at(Level.WARNING).log("Error saving file %s, %s", name, error);
@@ -254,22 +247,18 @@ public class BlockbenchConnection {
             return;
         }
 
-        AssetPack pack = null;
-
-        for (AssetPack assetPack : AssetModule.get().getAssetPacks()) {
-            String jsonPack = message.has("pack") ? message.get("pack").getAsString() : null;
-            if (assetPack.getName().equals(jsonPack)) {
-                pack = assetPack;
-                break;
-            }
-        }
-
+        AssetPack pack = getPackFromMessage(message);
         if (pack == null) {
             LOGGER.at(Level.WARNING).log("Missing asset pack for folder rename from connection (UUID: %s)", uuid);
             return;
         }
 
-        Path oldFolderPath = pack.getPackLocation().resolve("Common", path);
+        Path oldFolderPath = safeResolveCommonPath(pack, path);
+        if (oldFolderPath == null) {
+            LOGGER.at(Level.WARNING).log("Invalid path for folder rename from connection (UUID: %s): %s", uuid, path);
+            return;
+        }
+
         Path newFolderPath = oldFolderPath.getParent().resolve(name);
 
         try {
@@ -294,22 +283,18 @@ public class BlockbenchConnection {
             return;
         }
 
-        AssetPack pack = null;
-
-        for (AssetPack assetPack : AssetModule.get().getAssetPacks()) {
-            String jsonPack = message.has("pack") ? message.get("pack").getAsString() : null;
-            if (assetPack.getName().equals(jsonPack)) {
-                pack = assetPack;
-                break;
-            }
-        }
-
+        AssetPack pack = getPackFromMessage(message);
         if (pack == null) {
             LOGGER.at(Level.WARNING).log("Missing asset pack for file rename from connection (UUID: %s)", uuid);
             return;
         }
 
-        Path oldFilePath = pack.getPackLocation().resolve("Common", path);
+        Path oldFilePath = safeResolveCommonPath(pack, path);
+        if (oldFilePath == null) {
+            LOGGER.at(Level.WARNING).log("Invalid path for file rename from connection (UUID: %s): %s", uuid, path);
+            return;
+        }
+
         Path newFilePath = oldFilePath.getParent().resolve(name);
 
         try {
@@ -328,22 +313,17 @@ public class BlockbenchConnection {
             return;
         }
 
-        AssetPack pack = null;
-
-        for (AssetPack assetPack : AssetModule.get().getAssetPacks()) {
-            String jsonPack = message.has("pack") ? message.get("pack").getAsString() : null;
-            if (assetPack.getName().equals(jsonPack)) {
-                pack = assetPack;
-                break;
-            }
-        }
-
+        AssetPack pack = getPackFromMessage(message);
         if (pack == null) {
             LOGGER.at(Level.WARNING).log("Missing asset pack for folder deletion from connection (UUID: %s)", uuid);
             return;
         }
 
-        Path folderPath = pack.getPackLocation().resolve("Common", name);
+        Path folderPath = safeResolveCommonPath(pack, name);
+        if (folderPath == null) {
+            LOGGER.at(Level.WARNING).log("Invalid path for folder deletion from connection (UUID: %s): %s", uuid, name);
+            return;
+        }
 
         try {
             AssetPack finalPack = pack;
@@ -370,22 +350,17 @@ public class BlockbenchConnection {
             return;
         }
 
-        AssetPack pack = null;
-
-        for (AssetPack assetPack : AssetModule.get().getAssetPacks()) {
-            String jsonPack = message.has("pack") ? message.get("pack").getAsString() : null;
-            if (assetPack.getName().equals(jsonPack)) {
-                pack = assetPack;
-                break;
-            }
-        }
-
+        AssetPack pack = getPackFromMessage(message);
         if (pack == null) {
             LOGGER.at(Level.WARNING).log("Missing asset pack for file deletion from connection (UUID: %s)", uuid);
             return;
         }
 
-        Path file = pack.getPackLocation().resolve("Common", name);
+        Path file = safeResolveCommonPath(pack, name);
+        if (file == null) {
+            LOGGER.at(Level.WARNING).log("Invalid path for file deletion from connection (UUID: %s): %s", uuid, name);
+            return;
+        }
 
         try {
             if (Files.deleteIfExists(file)) {
@@ -396,5 +371,22 @@ public class BlockbenchConnection {
             LOGGER.at(Level.WARNING).log("Error deleting file %s, %s", file, error);
         }
     }
-}
 
+    @Nullable
+    private static AssetPack getPackFromMessage(JsonObject message) {
+        String packName = message.has("pack") ? message.get("pack").getAsString() : null;
+        if (packName == null) return null;
+        for (AssetPack assetPack : AssetModule.get().getAssetPacks()) {
+            if (assetPack.getName().equals(packName)) return assetPack;
+        }
+        return null;
+    }
+
+    @Nullable
+    private static Path safeResolveCommonPath(AssetPack pack, String relativePath) {
+        Path base = pack.getPackLocation().resolve("Common").normalize();
+        Path resolved = base.resolve(relativePath).normalize();
+        if (!resolved.startsWith(base)) return null;
+        return resolved;
+    }
+}

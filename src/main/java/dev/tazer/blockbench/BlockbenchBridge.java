@@ -19,9 +19,12 @@ import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.logging.Level;
 
 public class BlockbenchBridge {
@@ -32,6 +35,7 @@ public class BlockbenchBridge {
     private final Map<SocketAddress, BridgeSession> sessions = new ConcurrentHashMap<>();
     private final Map<SocketAddress, BlockbenchConnection> connections = new ConcurrentHashMap<>();
     private final Map<Instant, BlockbenchKey> keys = new ConcurrentHashMap<>();
+    private final List<ServerSocket> serverSockets = new CopyOnWriteArrayList<>();
     private static final HytaleLogger LOGGER = BlockbenchPlugin.get().getLogger();
 
     public BlockbenchBridge() {
@@ -40,62 +44,88 @@ public class BlockbenchBridge {
         }
     }
 
-    public String generateKey(@Nullable String username, UUID uuid) {
-        StringBuilder builder = new StringBuilder(4);
+    public String generateKey(String username, UUID uuid) {
+        StringBuilder code = new StringBuilder(4);
 
         for (int i = 0; i < 4; i++) {
             int index = RANDOM.nextInt(CHARACTERS.length());
-            builder.append(CHARACTERS.charAt(index));
+            code.append(CHARACTERS.charAt(index));
         }
 
-        String message = (username == null ? "" : username + '-') + builder;
-        keys.put(Instant.now(), new BlockbenchKey(message, uuid));
-        return message;
+        BlockbenchKey key = new BlockbenchKey(username, code.toString(), uuid);
+        keys.put(Instant.now(), key);
+        return key.getFullKey();
     }
 
     public Map<SocketAddress, BlockbenchConnection> getConnections() {
         return connections;
     }
 
+    @Nullable
+    public BridgeSession getSession(SocketAddress address) {
+        return sessions.get(address);
+    }
+
     public void disconnect(SocketAddress address) {
-        BridgeSession session = sessions.get(address);
-        connections.remove(session.getAddress());
         sessions.remove(address);
-        // TODO send disconnect
+        connections.remove(address);
+    }
+
+    public void shutdown() {
+        serverSockets.forEach(ss -> {
+            try { ss.close(); } catch (IOException ignored) {}
+        });
+        serverSockets.clear();
+        new ArrayList<>(sessions.values()).forEach(BridgeSession::close);
     }
 
     protected void createTCPListener(int port) {
-        new Thread(() -> {
-            try (ServerSocket serverSocket = new ServerSocket(port)) {
-                LOGGER.at(Level.INFO).log("TCP bridge listening on port %d", port);
+        ServerSocket serverSocket;
+        try {
+            serverSocket = new ServerSocket(port);
+        } catch (IOException e) {
+            LOGGER.at(Level.WARNING).log("Error while starting the blockbench server socket: {}", String.valueOf(e));
+            return;
+        }
+        serverSockets.add(serverSocket);
 
-                while (true) {
+        Thread thread = new Thread(() -> {
+            LOGGER.at(Level.INFO).log("TCP bridge listening on port %d", port);
+            while (!serverSocket.isClosed()) {
+                try {
                     Socket socket = serverSocket.accept();
                     LOGGER.at(Level.INFO).log("Received connection from: %s", socket.getRemoteSocketAddress());
 
-                    new Thread(() -> {
-                        try (BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))) {
-
-                            String line;
-                            while ((line = in.readLine()) != null) {
-                                JsonObject json = JsonParser.parseString(line).getAsJsonObject();
-
-                                handleMessage(new TCPBridgeSession(socket), json);
+                    Thread connThread = new Thread(() -> {
+                        try {
+                            TCPBridgeSession session = new TCPBridgeSession(socket);
+                            try (BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))) {
+                                String line;
+                                while ((line = in.readLine()) != null) {
+                                    JsonObject json = JsonParser.parseString(line).getAsJsonObject();
+                                    handleMessage(session, json);
+                                }
                             }
-                        } catch (Exception ignored) {
+                        } catch (Exception e) {
+                            LOGGER.at(Level.WARNING).log("Unexpected error on connection %s: %s", socket.getRemoteSocketAddress(), e);
                         } finally {
                             try { socket.close(); } catch (IOException ignored) {}
-                            LOGGER.at(Level.INFO).log("Connection aborted: %s", socket.getRemoteSocketAddress());
+                            LOGGER.at(Level.INFO).log("Connection closed: %s", socket.getRemoteSocketAddress());
                         }
-                    }).start();
+                    });
+                    connThread.setDaemon(true);
+                    connThread.start();
+                } catch (IOException e) {
+                    if (!serverSocket.isClosed()) {
+                        LOGGER.at(Level.WARNING).log("Error accepting connection: {}", String.valueOf(e));
+                    }
                 }
-
-            } catch (IOException e) {
-                LOGGER.at(Level.WARNING).log("Error while starting the blockbench server socket: {}", String.valueOf(e));
             }
-        }).start();
+        });
+        thread.setDaemon(true);
+        thread.start();
     }
-    
+
     protected void createUDPListener() {
         for (Channel channel : ServerManager.get().getListeners()) {
             try {
@@ -112,89 +142,106 @@ public class BlockbenchBridge {
     public void handleMessage(BridgeSession session, JsonObject message) {
         SocketAddress address = session.getAddress();
 
-        String type = message.has("type") ? message.get("type").getAsString() : null;
+        String typeStr = message.has("type") ? message.get("type").getAsString() : null;
 
-        if (type == null) {
-            session.disconnect();
+        if (typeStr == null) {
+            session.close();
             LOGGER.at(Level.WARNING).log("Missing packet type from connection %s", address);
             return;
         }
 
-        if (type.equals("create")) { // CREATE|key
-            LOGGER.at(Level.INFO).log("Starting authentication flow for connection %s", address);
+        MessageType type = MessageType.fromString(typeStr);
+        if (type == null) {
+            session.close();
+            LOGGER.at(Level.WARNING).log("Unknown packet type '%s' from connection %s", typeStr, address);
+            return;
+        }
 
-            String key = message.has("key") ? message.get("key").getAsString() : null;
-            if (key == null || key.isEmpty()) {
-                session.disconnect();
-                LOGGER.at(Level.WARNING).log("Missing blockbench key from connection %s", address);
-                return;
-            }
+        switch (type) {
+            case CREATE -> {
+                LOGGER.at(Level.INFO).log("Starting authentication flow for connection %s", address);
 
-            PlayerAuthentication authentication = null;
-            for (Map.Entry<Instant, BlockbenchKey> entry : keys.entrySet()) {
-                Instant instant = entry.getKey();
-                if (Duration.between(instant, Instant.now()).getSeconds() > 360) {
-                    keys.remove(instant);
-                    continue;
+                String key = message.has("key") ? message.get("key").getAsString() : null;
+                if (key == null || key.isEmpty()) {
+                    session.close();
+                    LOGGER.at(Level.WARNING).log("Missing blockbench key from connection %s", address);
+                    return;
                 }
 
-                if (entry.getValue().message().equals(key)) {
-                    authentication = new PlayerAuthentication(UUID.randomUUID(), key.split("-")[0]);
-                    keys.remove(instant);
-                    break;
+                PlayerAuthentication authentication = null;
+                for (Map.Entry<Instant, BlockbenchKey> entry : keys.entrySet()) {
+                    Instant instant = entry.getKey();
+                    if (Duration.between(instant, Instant.now()).getSeconds() > 360) {
+                        keys.remove(instant);
+                        continue;
+                    }
+
+                    if (key.equals(entry.getValue().getFullKey())) {
+                        authentication = new PlayerAuthentication(UUID.randomUUID(), entry.getValue().username());
+                        keys.remove(instant);
+                        break;
+                    }
                 }
+
+                if (authentication == null) {
+                    session.close();
+                    LOGGER.at(Level.WARNING).log("Could not validate authentication for Blockbench connection %s", address);
+                    return;
+                }
+
+                LOGGER.at(Level.INFO).log("Authentication validated for connection %s", address);
+
+                BridgeSession existing = sessions.get(address);
+                if (existing != null) {
+                    LOGGER.at(Level.INFO).log("Replacing existing session at %s", address);
+                    existing.close();
+                }
+
+                BlockbenchConnection connection = new BlockbenchConnection(session, authentication);
+                sessions.put(address, session);
+                connections.put(session.getAddress(), connection);
+
+                LOGGER.at(Level.INFO).log("Blockbench connection %s (UUID: %s) established!", authentication.getUsername(), authentication.getUuid());
+
+                JsonObject response = new JsonObject();
+                response.addProperty("type", MessageType.CREATED.value());
+                response.addProperty("uuid", authentication.getUuid().toString());
+                connection.sendMessage(response);
             }
+            case COMMAND -> {
+                String uuidString = message.has("uuid") ? message.get("uuid").getAsString() : null;
 
-            if (authentication == null) {
-                session.disconnect();
-                LOGGER.at(Level.WARNING).log("Could not validate authentication for Blockbench connection %s", address);
-                return;
+                if (uuidString == null) {
+                    session.close();
+                    LOGGER.at(Level.WARNING).log("Missing UUID from connection %s", address);
+                    return;
+                }
+
+                BlockbenchConnection connection = connections.get(session.getAddress());
+                if (connection == null) {
+                    session.close();
+                    LOGGER.at(Level.WARNING).log("Nonexistent connection for session %s: %s", address, uuidString);
+                    return;
+                }
+
+                UUID uuid;
+                try {
+                    uuid = UUID.fromString(uuidString);
+                } catch (Exception e) {
+                    session.close();
+                    LOGGER.at(Level.WARNING).log("Invalid UUID from connection %s: %s", address, uuidString);
+                    return;
+                }
+
+                if (!connection.getUuid().equals(uuid)) {
+                    session.close();
+                    LOGGER.at(Level.WARNING).log("Incorrect UUID from connection %s: %s", address, uuidString);
+                    return;
+                }
+
+                connection.handleCommand(message);
             }
-
-            LOGGER.at(Level.INFO).log("Authentication validated for connection %s", address);
-
-            BlockbenchConnection connection = new BlockbenchConnection(session, authentication);
-            sessions.put(address, session);
-            connections.put(session.getAddress(), connection);
-
-            LOGGER.at(Level.INFO).log("Blockbench connection %s (UUID: %s) established!", authentication.getUsername(), authentication.getUuid());
-
-            JsonObject response = new JsonObject();
-            response.addProperty("type", "created");
-            response.addProperty("uuid", authentication.getUuid().toString());
-            connection.sendMessage(response);
-        } else if (type.equals("command")) {
-            String uuidString = message.has("uuid") ? message.get("uuid").getAsString() : null;
-
-            if (uuidString == null) {
-                session.disconnect();
-                LOGGER.at(Level.WARNING).log("Missing UUID from connection %s", address);
-                return;
-            }
-
-            BlockbenchConnection connection = connections.get(session.getAddress());
-            if (connection == null) {
-                session.disconnect();
-                LOGGER.at(Level.WARNING).log("Nonexistent connection for session %s: %s", address, uuidString);
-                return;
-            }
-
-            UUID uuid;
-            try {
-                uuid = UUID.fromString(uuidString);
-            } catch (Exception e) {
-                session.disconnect();
-                LOGGER.at(Level.WARNING).log("Invalid UUID from connection %s: %s", address, uuidString);
-                return;
-            }
-
-            if (!connection.getUuid().equals(uuid)) {
-                session.disconnect();
-                LOGGER.at(Level.WARNING).log("Incorrect UUID from connection %s: %s", address, uuidString);
-                return;
-            }
-
-            connection.handleCommand(message);
+            default -> LOGGER.at(Level.WARNING).log("Unexpected packet type '%s' from connection %s", typeStr, address);
         }
     }
 }
